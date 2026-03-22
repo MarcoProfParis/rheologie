@@ -1,10 +1,10 @@
 {
   "files": {
-    "main.js": "/rheologie/static/js/main.d47ed232.js",
+    "main.js": "/rheologie/static/js/main.e8326919.js",
     "index.html": "/rheologie/index.html",
-    "main.d47ed232.js.map": "/rheologie/static/js/main.d47ed232.js.map"
+    "main.e8326919.js.map": "/rheologie/static/js/main.e8326919.js.map"
   },
   "entrypoints": [
-    "static/js/main.d47ed232.js"
+    "static/js/main.e8326919.js"
   ]
 }
