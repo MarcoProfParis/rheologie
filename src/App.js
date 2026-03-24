@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import GouttteMouillage from "./GouttteMouillage";
+import ZismanApp from "./ZismanApp";
 import {
   LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer,
@@ -60,7 +62,7 @@ const MODELS = {
     formulaSigma: "\\sigma = \\eta \\cdot \\dot{\\gamma}",
     formulaEta: "\\eta = \\text{cste}",
     formulaFull: "\\sigma = \\eta \\cdot \\dot{\\gamma}",
-    paramDefs: { eta: { tex: "\\eta", unit: "Pa·s", min: 0.01, max: 50, step: 0.01, default: 1.0, desc: "Viscosité dynamique" } },
+    paramDefs: { eta: { tex: "\\eta", unit: "Pa·s", min: 0.001, max: 5, step: 0.001, default: 0.001, desc: "Viscosité dynamique" } },
     compute: ({ eta }, g) => ({ sigma: eta * g, eta_val: eta }),
     invSigToG: ({ eta }, s) => s / eta,
     dsigma_dgdot: ({ eta }) => eta,
@@ -75,8 +77,8 @@ const MODELS = {
     formulaEta: "\\eta = k \\cdot \\dot{\\gamma}^{n-1}",
     formulaFull: "\\sigma = k \\cdot \\dot{\\gamma}^{n}",
     paramDefs: {
-      k: { tex: "k", unit: "Pa·sⁿ", min: 0.01, max: 30, step: 0.05, default: 2.0, desc: "Indice de consistance" },
-      n: { tex: "n", unit: "—",     min: 0.1,  max: 2.5, step: 0.01, default: 0.5, desc: "Indice d'écoulement" },
+      k: { tex: "k", unit: "Pa·sⁿ", min: 0.01, max: 30, step: 0.005, default: 0.360, desc: "Indice de consistance" },
+      n: { tex: "n", unit: "—",     min: 0.1,  max: 2.5, step: 0.01,  default: 1.18, desc: "Indice d'écoulement" },
     },
     compute: ({ k, n }, g) => ({ sigma: k * Math.pow(g, n), eta_val: k * Math.pow(g, n - 1) }),
     invSigToG: ({ k, n }, s) => Math.pow(s / k, 1 / n),
@@ -92,8 +94,8 @@ const MODELS = {
     formulaEta: "\\eta = \\dfrac{\\sigma_0}{\\dot{\\gamma}} + \\eta_{pl}",
     formulaFull: "\\begin{cases}\\dot{\\gamma}=0 & \\text{si }\\sigma\\leq\\sigma_0\\\\\\sigma=\\sigma_0+\\eta_{pl}\\,\\dot{\\gamma}&\\text{si }\\sigma>\\sigma_0\\end{cases}",
     paramDefs: {
-      sigma0: { tex: "\\sigma_0",  unit: "Pa",  min: 0,    max: 50, step: 0.5,  default: 5.0, desc: "Seuil d'écoulement" },
-      etapl:  { tex: "\\eta_{pl}", unit: "Pa·s", min: 0.01, max: 20, step: 0.01, default: 1.0, desc: "Viscosité plastique" },
+      sigma0: { tex: "\\sigma_0",  unit: "Pa",  min: 0,    max: 200, step: 0.5,  default: 50,  desc: "Seuil d'écoulement" },
+      etapl:  { tex: "\\eta_{pl}", unit: "Pa·s", min: 0.01, max: 20,  step: 0.01, default: 1.72, desc: "Viscosité plastique" },
     },
     compute: ({ sigma0, etapl }, g) =>
       g <= 0 ? { sigma: 0, eta_val: Infinity }
@@ -111,9 +113,9 @@ const MODELS = {
     formulaEta: "\\eta = \\dfrac{\\sigma_0}{\\dot{\\gamma}} + k\\,\\dot{\\gamma}^{n-1}",
     formulaFull: "\\begin{cases}\\dot{\\gamma}=0&\\text{si }\\sigma\\leq\\sigma_0\\\\\\sigma=\\sigma_0+k\\,\\dot{\\gamma}^n&\\text{si }\\sigma>\\sigma_0\\end{cases}",
     paramDefs: {
-      sigma0: { tex: "\\sigma_0", unit: "Pa",   min: 0,    max: 50,  step: 0.5,  default: 3.0,  desc: "Seuil d'écoulement" },
-      k:      { tex: "k",        unit: "Pa·sⁿ", min: 0.01, max: 30,  step: 0.05, default: 3.0,  desc: "Indice de consistance" },
-      n:      { tex: "n",        unit: "—",     min: 0.1,  max: 2.5,  step: 0.01, default: 0.55, desc: "Indice d'écoulement" },
+      sigma0: { tex: "\\sigma_0", unit: "Pa",   min: 0,    max: 50,  step: 0.5,  default: 0,   desc: "Seuil d'écoulement" },
+      k:      { tex: "k",        unit: "Pa·sⁿ", min: 0.01, max: 30,  step: 0.05, default: 8.0, desc: "Indice de consistance" },
+      n:      { tex: "n",        unit: "—",     min: 0.1,  max: 2.5,  step: 0.01, default: 0.7, desc: "Indice d'écoulement" },
     },
     compute: ({ sigma0, k, n }, g) => {
       if (g <= 0) return { sigma: 0, eta_val: Infinity };
@@ -563,6 +565,139 @@ function AxisControls({ xAxis, yAxis, xLog, yLog, xMin, xMax, yMin, yMax, xTicks
   );
 }
 
+// ─── TextBoxLayer ─────────────────────────────────────────────────────────────
+function TextBoxLayer({ boxes, setBoxes, editingId, setEditingId, chartH }) {
+  const svgRef  = useRef(null);
+  const editRef = useRef(null);
+  const dragRef = useRef(null); // { type:'move'|'rotate', id, startX, startY, origX, origY, cx, cy }
+  const HOFF = 26; // pixels above box for rotate handle
+
+  // Focus textarea when editing starts
+  useEffect(() => {
+    if (editingId && editRef.current) {
+      editRef.current.focus();
+      editRef.current.select();
+    }
+  }, [editingId]);
+
+  // Global drag/rotate handlers
+  useEffect(() => {
+    const onMove = (e) => {
+      const d = dragRef.current; if (!d) return;
+      if (d.type === "move") {
+        const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
+        setBoxes((prev) => prev.map((b) => b.id === d.id ? { ...b, x: d.origX + dx, y: d.origY + dy } : b));
+      } else if (d.type === "rotate") {
+        const angle = Math.atan2(e.clientY - d.cy, e.clientX - d.cx) * 180 / Math.PI + 90;
+        setBoxes((prev) => prev.map((b) => b.id === d.id ? { ...b, rotation: angle } : b));
+      }
+    };
+    const onUp = () => { dragRef.current = null; };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+  }, [setBoxes]);
+
+  const startMove = (e, box) => {
+    if (editingId === box.id) return;
+    e.stopPropagation(); e.preventDefault();
+    dragRef.current = { type: "move", id: box.id, startX: e.clientX, startY: e.clientY, origX: box.x, origY: box.y };
+  };
+
+  const startRotate = (e, box) => {
+    e.stopPropagation(); e.preventDefault();
+    const r = svgRef.current.getBoundingClientRect();
+    dragRef.current = { type: "rotate", id: box.id, cx: r.left + box.x, cy: r.top + box.y };
+  };
+
+  const removeBox = (e, id) => {
+    e.stopPropagation();
+    setBoxes((prev) => prev.filter((b) => b.id !== id));
+    if (editingId === id) setEditingId(null);
+  };
+
+  const editingBox = editingId ? boxes.find((b) => b.id === editingId) : null;
+
+  return (
+    <>
+      <svg ref={svgRef} width="100%" height={chartH}
+        style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none", overflow: "visible", zIndex: 6 }}
+      >
+        {boxes.map((box) => {
+          const lines = (box.text || " ").split("\n");
+          const lh  = box.fontSize + 5;
+          const w   = Math.max(80, Math.max(...lines.map((l) => (l.length || 1))) * box.fontSize * 0.57 + 24);
+          const h   = lines.length * lh + 14;
+          const isEd = editingId === box.id;
+          return (
+            <g key={box.id} transform={`translate(${box.x},${box.y}) rotate(${box.rotation})`}>
+              {/* Box rect — drag handle */}
+              <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={5}
+                fill="white" fillOpacity={isEd ? 0 : 0.92}
+                stroke={box.color} strokeWidth={1.5}
+                strokeDasharray={isEd ? "4 3" : undefined}
+                style={{ pointerEvents: isEd ? "none" : "all", cursor: "move" }}
+                onMouseDown={(e) => startMove(e, box)}
+                onDoubleClick={(e) => { e.stopPropagation(); setEditingId(box.id); }}
+              />
+              {/* Text lines */}
+              {!isEd && lines.map((line, i) => (
+                <text key={i} x={0} y={-h / 2 + 9 + (i + 1) * lh - 2}
+                  textAnchor="middle" fill={box.color} fontSize={box.fontSize} fontFamily={T.fontUi}
+                  style={{ pointerEvents: "none", userSelect: "none" }}
+                >{line || " "}</text>
+              ))}
+              {/* Rotate stem */}
+              <line x1={0} y1={-h / 2} x2={0} y2={-h / 2 - HOFF}
+                stroke={box.color} strokeWidth={1.5} strokeOpacity={0.55}
+                style={{ pointerEvents: "none" }} />
+              {/* Rotate handle */}
+              <circle cx={0} cy={-h / 2 - HOFF} r={7}
+                fill="white" stroke={box.color} strokeWidth={1.5}
+                style={{ pointerEvents: "all", cursor: "grab" }}
+                onMouseDown={(e) => startRotate(e, box)} />
+              <text x={0} y={-h / 2 - HOFF + 4.5} textAnchor="middle"
+                fontSize={10} fill={box.color}
+                style={{ pointerEvents: "none", userSelect: "none" }}>↻</text>
+              {/* Delete button */}
+              <g onClick={(e) => removeBox(e, box.id)} style={{ pointerEvents: "all", cursor: "pointer" }}>
+                <circle cx={w / 2 - 1} cy={-h / 2 + 1} r={8} fill="white" stroke={box.color} strokeWidth={1.2} />
+                <text x={w / 2 - 1} y={-h / 2 + 5.5} textAnchor="middle"
+                  fontSize={12} fontWeight="bold" fill={box.color}
+                  style={{ userSelect: "none", pointerEvents: "none" }}>×</text>
+              </g>
+            </g>
+          );
+        })}
+      </svg>
+
+      {/* Inline textarea overlay */}
+      {editingBox && (
+        <div style={{
+          position: "absolute", left: editingBox.x, top: editingBox.y, zIndex: 20,
+          pointerEvents: "auto",
+          transform: `translate(-50%,-50%) rotate(${editingBox.rotation}deg)`,
+        }}>
+          <textarea ref={editRef}
+            value={editingBox.text}
+            onChange={(e) => setBoxes((prev) => prev.map((b) => b.id === editingBox.id ? { ...b, text: e.target.value } : b))}
+            onKeyDown={(e) => { if (e.key === "Escape") setEditingId(null); e.stopPropagation(); }}
+            onBlur={() => setEditingId(null)}
+            rows={Math.max(1, editingBox.text.split("\n").length)}
+            style={{
+              border: `2px solid ${editingBox.color}`, borderRadius: 5,
+              padding: "6px 10px", fontSize: editingBox.fontSize,
+              fontFamily: T.fontUi, color: editingBox.color,
+              background: "white", resize: "both", minWidth: 80, minHeight: 30,
+              outline: "none", boxShadow: `0 0 0 3px ${editingBox.color}33`, display: "block",
+            }}
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
 // ─── APP ──────────────────────────────────────────────────────────────────────
 const ChevronIcon = ({ dir }) => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -570,20 +705,20 @@ const ChevronIcon = ({ dir }) => (
   </svg>
 );
 
-export default function RheogrammeSimulateur() {
+function RheogrammeSimulateur({ onBack }) {
   useKatex();
 
   // ── Modèle & axes ──
   const [activeModel, setActiveModel] = useState("hb");
-  const [overlays, setOverlays] = useState({ newton: false, puissance: false, bingham: false, hb: true });
+  const [overlays, setOverlays] = useState({ newton: true, puissance: true, bingham: true, hb: true });
   const [xAxis, setXAxis] = useState("gdot");
   const [yAxis, setYAxis] = useState("sigma");
   const [xLog, setXLog] = useState(false);
   const [yLog, setYLog] = useState(false);
   const [xMin, setXMin] = useState(0);
-  const [xMax, setXMax] = useState(200);
+  const [xMax, setXMax] = useState(800);
   const [yMin, setYMin] = useState(0);
-  const [yMax, setYMax] = useState(300);
+  const [yMax, setYMax] = useState(800);
   const [xTicks, setXTicks] = useState(6);
   const [yTicks, setYTicks] = useState(6);
   const [params, setParams] = useState(() => {
@@ -609,6 +744,10 @@ export default function RheogrammeSimulateur() {
   const [drawColor, setDrawColor] = useState("#e11d48");
   const [drawStroke, setDrawStroke] = useState(2);
   const [textSize, setTextSize] = useState(14);
+
+  // ── Boîtes de texte ──
+  const [textBoxes, setTextBoxes] = useState([]);
+  const [editingTextBoxId, setEditingTextBoxId] = useState(null);
 
   const isDrawing = useRef(false);
   const currentDraw = useRef([]);
@@ -729,6 +868,17 @@ export default function RheogrammeSimulateur() {
     setDrawings((prev) => prev.map((d) => ({ ...d, __live: false })));
   };
 
+  // ── Ajout d'une boîte de texte au clic ─────────────────────────────────────
+  const handleAddTextBox = useCallback((e) => {
+    const rect = chartWrapRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const newId = Date.now();
+    setTextBoxes((prev) => [...prev, { id: newId, x, y, text: "Texte", rotation: 0, color: drawColor, fontSize: textSize }]);
+    setEditingTextBoxId(newId);
+    setTool("none");
+  }, [drawColor, textSize]);
+
   // ── Actions points ─────────────────────────────────────────────────────────
   const toggleTangent = (idx) => setAnnotPoints((prev) => prev.map((pt, i) => i === idx ? { ...pt, showTangent: !pt.showTangent } : pt));
   const removePoint   = (idx) => setAnnotPoints((prev) => prev.filter((_, i) => i !== idx));
@@ -736,15 +886,16 @@ export default function RheogrammeSimulateur() {
   // ── Export PNG ────────────────────────────────────────────────────────────
   const handleExport = () => {
     const scale = 3;
-    const W = canvasSize.w * scale; const H = canvasSize.h * scale;
+    const PAD = 24;
+    const W = (canvasSize.w + PAD * 2) * scale; const H = (canvasSize.h + PAD * 2) * scale;
     const off = document.createElement("canvas"); off.width = W; off.height = H;
     const ctx = off.getContext("2d"); ctx.scale(scale, scale);
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvasSize.w + PAD * 2, canvasSize.h + PAD * 2);
+    ctx.translate(PAD, PAD);
     const pL = YAXIS_W + MARGIN.left, pR = canvasSize.w - MARGIN.right;
     const pT = MARGIN.top, pB = canvasSize.h - MARGIN.bottom;
     const tPX = (v) => dataToPixel(v, xMin, xMax, pL, pR, xLog);
     const tPY = (v) => dataToPixel(v, yMin, yMax, pB, pT, yLog);
-
-    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvasSize.w, canvasSize.h);
     const xTV = xLog ? [] : makeTicks(xMin, xMax, xTicks);
     const yTV = yLog ? [] : makeTicks(yMin, yMax, yTicks);
     ctx.strokeStyle = "#94a3b8"; ctx.lineWidth = 0.5; ctx.setLineDash([3, 3]);
@@ -799,6 +950,11 @@ export default function RheogrammeSimulateur() {
     <div style={{ fontFamily: T.fontUi, background: T.bg, minHeight: "100vh" }}>
       {/* Header */}
       <div style={{ background: T.blue900, color: "#fff", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12 }}>
+        {onBack && (
+          <button onClick={onBack} style={{ padding: "5px 12px", borderRadius: 7, border: "1px solid rgba(255,255,255,0.3)", background: "transparent", color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>
+            ← Menu
+          </button>
+        )}
         <div style={{ width: 34, height: 34, borderRadius: 8, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.22)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17 }}>⚗</div>
         <div>
           <div style={{ fontSize: 15, fontWeight: 700 }}>Simulateur de rhéogrammes</div>
@@ -812,7 +968,7 @@ export default function RheogrammeSimulateur() {
           <button onClick={() => setPanelOpen(false)} title="Fermer" style={{ position: "absolute", top: 12, right: 8, zIndex: 10, width: 26, height: 26, borderRadius: 6, background: T.bg, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: T.textMuted }}>
             <ChevronIcon dir="left" />
           </button>
-          <div style={{ padding: 18, paddingTop: 44, width: 340, overflowY: "auto", height: "100%" }}>
+          <div style={{ padding: 18, paddingTop: 44, width: 300, overflowY: "auto", height: "100%" }}>
 
             {/* Points déposés */}
             {annotPoints.length > 0 && (
@@ -895,14 +1051,9 @@ export default function RheogrammeSimulateur() {
           <div style={{ background: T.white, border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: T.textLight, textTransform: "uppercase", letterSpacing: "0.07em" }}>Annotations</span>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 5, background: T.red50, border: `1px solid ${T.red100}`, borderRadius: 6, padding: "4px 10px" }}>
-              <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill={T.red600} /></svg>
-              <span style={{ fontSize: 11, color: T.red600, fontWeight: 600 }}>Clic sur la courbe → dépose un point</span>
-            </div>
-
             <SegBtn active={tool === "draw"} onClick={() => setTool(tool === "draw" ? "none" : "draw")} accentColor={T.purple600} accentBg={T.purple50}>✏ Dessin libre</SegBtn>
-            <SegBtn active={tool === "text"} onClick={() => setTool(tool === "text" ? "none" : "text")} accentColor={T.teal600} accentBg={T.teal50}>T Texte</SegBtn>
-            <button onClick={() => { setAnnotPoints([]); setDrawings([]); setTexts([]); }} style={{ padding: "5px 12px", border: `1px solid ${T.border}`, borderRadius: 6, background: T.white, color: T.textMuted, fontSize: 12, cursor: "pointer" }}>✕ Tout effacer</button>
+            <SegBtn active={tool === "textbox"} onClick={() => setTool(tool === "textbox" ? "none" : "textbox")} accentColor={T.orange600} accentBg={T.orange50}>Texte</SegBtn>
+            <button onClick={() => { setAnnotPoints([]); setDrawings([]); setTexts([]); setTextBoxes([]); setEditingTextBoxId(null); }} style={{ padding: "5px 12px", border: `1px solid ${T.border}`, borderRadius: 6, background: T.white, color: T.textMuted, fontSize: 12, cursor: "pointer" }}>✕ Tout effacer</button>
 
             <div style={{ width: 1, height: 24, background: T.border }} />
             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -985,6 +1136,19 @@ export default function RheogrammeSimulateur() {
                 xLog={xLog} yLog={yLog}
                 onDragMove={handleDragMove}
               />
+
+              {/* Boîtes de texte : déplaçables, rotatives, éditables */}
+              <TextBoxLayer
+                boxes={textBoxes} setBoxes={setTextBoxes}
+                editingId={editingTextBoxId} setEditingId={setEditingTextBoxId}
+                chartH={chartH}
+              />
+
+              {/* Overlay de capture de clic pour créer un encadré */}
+              {tool === "textbox" && (
+                <div onClick={handleAddTextBox}
+                  style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", cursor: "crosshair", zIndex: 50 }} />
+              )}
             </div>
 
             {/* Légende */}
@@ -1048,6 +1212,84 @@ export default function RheogrammeSimulateur() {
             </div>
           </div>
 
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Page d'accueil ───────────────────────────────────────────────────────────
+const APPS = [
+  {
+    id: "rheologie",
+    title: "Rhéologie",
+    subtitle: "Simulateur de rhéogrammes",
+    desc: "Newton, Ostwald, Bingham, Herschel-Bulkley",
+    color: "#1e3a5f",
+    border: "#2563eb",
+    bg: "#eff6ff",
+  },
+  {
+    id: "mouillage",
+    title: "Mouillage",
+    subtitle: "Angle de contact — Loi de Young",
+    desc: "Simulation goutte / substrat, vecteurs γ",
+    color: "#0891b2",
+    border: "#0891b2",
+    bg: "#ecfeff",
+  },
+  {
+    id: "zisman",
+    title: "Zisman",
+    subtitle: "Droite de Zisman",
+    desc: "Tension critique, tracé graphique, élève/prof",
+    color: "#166534",
+    border: "#166534",
+    bg: "#f0fdf4",
+  },
+];
+
+export default function App() {
+  const [page, setPage] = useState(null);
+
+  if (page === "rheologie") return <RheogrammeSimulateur onBack={() => setPage(null)} />;
+  if (page === "mouillage") return <GouttteMouillage onBack={() => setPage(null)} />;
+  if (page === "zisman")    return <ZismanApp onBack={() => setPage(null)} />;
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#f1f5f9", fontFamily: "'Helvetica Neue',Arial,sans-serif", display: "flex", flexDirection: "column" }}>
+      <div style={{ background: "#1e3a5f", color: "#fff", padding: "28px 40px" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", opacity: 0.6, marginBottom: 6 }}>BTS Métiers de la Chimie</div>
+        <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: -0.5 }}>Applications pédagogiques</div>
+        <div style={{ fontSize: 14, opacity: 0.6, marginTop: 4 }}>Sélectionnez un module pour démarrer</div>
+      </div>
+      <div style={{ padding: "32px 24px" }}>
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", justifyContent: "center", maxWidth: 900, margin: "0 auto" }}>
+          {APPS.map((app) => (
+            <button
+              key={app.id}
+              onClick={() => setPage(app.id)}
+              style={{
+                width: 260, padding: "32px 28px", borderRadius: 16,
+                background: "white", border: `2px solid ${app.border}22`,
+                cursor: "pointer", textAlign: "left",
+                boxShadow: "0 2px 16px rgba(0,0,0,0.07)",
+                transition: "box-shadow 0.15s, transform 0.15s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.boxShadow = `0 8px 32px ${app.border}44`; e.currentTarget.style.transform = "translateY(-2px)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 2px 16px rgba(0,0,0,0.07)"; e.currentTarget.style.transform = "translateY(0)"; }}
+            >
+              <div style={{ width: 44, height: 44, borderRadius: 10, background: app.bg, border: `1.5px solid ${app.border}44`, marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: app.color }} />
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: app.color, marginBottom: 4 }}>{app.title}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 8 }}>{app.subtitle}</div>
+              <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.5 }}>{app.desc}</div>
+              <div style={{ marginTop: 20, display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: app.color }}>
+                Ouvrir →
+              </div>
+            </button>
+          ))}
         </div>
       </div>
     </div>

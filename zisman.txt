@@ -1,0 +1,6 @@
+Ce sont juste des avertissements "non utilisé" — c'est normal et voulu puisqu'on garde le code pour pouvoir le réactiver. Rien à corriger.
+
+Pour réactiver plus tard, il suffira de :
+
+Remettre useState(null) à la ligne 329
+Décommenter {!role && <RolePopup onSelect={handleRoleSelect}/>} à la ligne 554
